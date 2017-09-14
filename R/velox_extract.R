@@ -95,6 +95,77 @@ VeloxRaster$methods(extract = function(sp, fun) {
   return(out)
 })
 
+
+
+VeloxRaster$methods(extract_to_list = function(sp, fun) {
+
+  if(nbands != 1) {
+    stop("Function only works on one band rasters")
+  }
+  out <- as.list(rep(NA, length(sp)))
+
+
+  overlaps <- .self$overlapsExtent(sp)
+  if (!overlaps) {
+    return(out)
+  }
+
+  for (p in 1:length(sp)) {
+
+    ## Disect SpatialPolygons object
+    sp.ls <- disect(rgeos::createSPComment(sp[p,]))
+    ring.ls <- sp.ls[[1]]
+    hole.ls <- sp.ls[[2]]
+
+    ## Intersections
+    hitmat.ls <- vector("list", length(ring.ls))
+    for (i in 1:length(ring.ls)) {  ## For each outer ring
+
+      ## Get this ring
+      ring <- ring.ls[[i]]
+      ring <- ring[-nrow(ring),]
+
+      ## Get extent of this ring
+      ext <- c(min(ring[,1]), max(ring[,1]), min(ring[,2]), max(ring[,2]))
+
+      ## Check whether ring overlaps with raster
+      ring.overlaps <- .self$overlapsExtent(ext)
+      if (ring.overlaps) {
+        ## Crop raster
+        crop.vx <- .self$copy()
+        crop.vx$crop(ext)
+        ## Get intersection with ring
+        hitmat.ls[[i]] <- hittest_cpp(crop.vx$rasterbands, crop.vx$dim, crop.vx$extent, crop.vx$res, ring[,1], ring[,2], nrow(ring))
+      } else {
+        hitmat.ls[[i]] <- matrix(NA, 0, 2+nbands)
+      }
+
+      ## For each hole: remove points that intersect with hole
+      thishole.ls <- hole.ls[[i]]
+      if (length(thishole.ls) > 0 & ring.overlaps) {
+        for (j in 1:length(thishole.ls)) {
+          hole <- thishole.ls[[j]]
+          hole <- hole[-nrow(hole),]
+          hitmat.ls[[i]] <- unhit_cpp(hitmat.ls[[i]], hole[,1], hole[,2], nrow(hole))
+        }
+      }
+    }
+
+    ## Pass extracted values through 'fun'
+    hitmat <- do.call(rbind, hitmat.ls)
+    valmat <- hitmat[,3:ncol(hitmat),drop=FALSE]
+    if (nrow(valmat) > 0) {
+      for (k in 1:ncol(valmat)) {
+        out[[p]] <- fun(valmat[,k])
+      }
+    }
+  }
+  return(out)
+})
+
+
+
+
 disect <- function(sp) {
   ## sp:    SpatialPolygon* object
 
